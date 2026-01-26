@@ -65,7 +65,7 @@ from typing import Optional
 
 TOP1_PATTERNS = [
     re.compile(r"\*\s*Acc@1\s*([0-9]+\.[0-9]+)"),  # " * Acc@1 81.234 Acc@5 ..."
-    re.compile(r"Acc@1\s*([0-9]+\.[0-9]+)\s*\(",   # "Acc@1 81.234 (81.111)"
+    re.compile(r"Acc@1\s*([0-9]+\.[0-9]+)\s*\("),   # "Acc@1 81.234 (81.111)"
     re.compile(r"Accuracy of the network on the .*? test images:\s*([0-9]+\.[0-9]+)%"),
 ]
 
@@ -149,8 +149,10 @@ def main():
     ap.add_argument("--base_window_size", type=int, default=7)
 
     # hyperparam grids (comma-separated)
-    ap.add_argument("--gamma_lo", default="2.0,2.3,2.6,3.0")
-    ap.add_argument("--gamma_hi", default="0.8,1.1,1.4,1.7")
+    ap.add_argument("--gamma_lo", default="2.0")
+    ap.add_argument("--gamma_hi", default="0.8")
+    # ap.add_argument("--gamma_lo", default="2.0,2.3,2.6,3.0")
+    # ap.add_argument("--gamma_hi", default="0.8,1.1,1.4,1.7")
     ap.add_argument("--transition", default="cos")
     ap.add_argument("--depth_ramp_p", default="1.0,2.0")
     ap.add_argument("--scale_threshold", default="1.05,10.0")   # 10.0 ~= ramp-off diagnostic
