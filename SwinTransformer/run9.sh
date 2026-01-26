@@ -1,11 +1,11 @@
 inputsz=512
 inputsz_w=512
 let WINDOW_SIZE=inputsz_w/32
-save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
-data_path="/media/disk1/models/dataset/imagenet1K"
+save_dir="/media/ssd1/zwx/viy/SwinTransformer/result"
+data_path="/media/ssd1/zwx/dataset/im1k"
 
-config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_small_patch4_window7_224.yaml"
-checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-small.bin"
+config_file="configs/swinrope/swin_rope_axial_small_patch4_window7_224.yaml"
+checkpoint_file="official_ckpt/swin-rope-axial-small.bin"
 save_path=$save_dir"/"$inputsz
 
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
@@ -21,7 +21,7 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch  \
 --batch-size 64 \
 --opts DATA.IMG_SIZE $inputsz DATA.IMG_SIZE_W $inputsz_w MODEL.SWIN.WINDOW_SIZE $WINDOW_SIZE \
 --eval 
-
+# 512 128 / 384 256
 # 512512 32
 # 75.722 vs 76.466
 
