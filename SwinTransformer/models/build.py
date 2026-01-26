@@ -10,7 +10,19 @@ from .swin_transformer_v2 import SwinTransformerV2
 from .swin_transformer_moe import SwinTransformerMoE
 from .swin_mlp import SwinMLP
 from .simmim import build_simmim
-from .swin_transformer_rope import RoPESwinTransformer
+# from .swin_transformer_rope import RoPESwinTransformer
+from .swin_transformer_rope_viyarn1 import RoPESwinTransformer
+
+
+def _get_img_size(config):
+    """Get image size from config, supporting non-square inputs.
+    Returns (H, W) tuple if IMG_SIZE_W > 0, otherwise returns IMG_SIZE as int.
+    """
+    h = int(config.DATA.IMG_SIZE)
+    w = int(getattr(config.DATA, "IMG_SIZE_W", 0) or 0)
+    if w > 0 and w != h:
+        return (h, w)
+    return h
 
 
 def build_model(config, is_pretrain=False):
@@ -32,8 +44,12 @@ def build_model(config, is_pretrain=False):
         model = build_simmim(config)
         return model
 
+    img_size = _get_img_size(config)
+    # New
+    base_window_size = img_size[0] // 32
+
     if model_type == 'swin':
-        model = SwinTransformer(img_size=config.DATA.IMG_SIZE,
+        model = SwinTransformer(img_size=img_size,
                                 patch_size=config.MODEL.SWIN.PATCH_SIZE,
                                 in_chans=config.MODEL.SWIN.IN_CHANS,
                                 num_classes=config.MODEL.NUM_CLASSES,
@@ -52,7 +68,7 @@ def build_model(config, is_pretrain=False):
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
                                 fused_window_process=config.FUSED_WINDOW_PROCESS)
     elif model_type == 'swin_rope':
-        model = RoPESwinTransformer(img_size=config.DATA.IMG_SIZE,
+        model = RoPESwinTransformer(img_size=img_size,
                                     patch_size=config.MODEL.SWIN.PATCH_SIZE,
                                     in_chans=config.MODEL.SWIN.IN_CHANS,
                                     num_classes=config.MODEL.NUM_CLASSES,
@@ -72,9 +88,12 @@ def build_model(config, is_pretrain=False):
                                     fused_window_process=config.FUSED_WINDOW_PROCESS,
                                     rope_theta=config.MODEL.SWIN_ROPE.THETA,
                                     rope_mixed=config.MODEL.SWIN_ROPE.MIXED,
-                                    use_rpb=config.MODEL.SWIN_ROPE.RPB)
+                                    use_rpb=config.MODEL.SWIN_ROPE.RPB,
+                                    # New one
+                                    basewindow_size=base_window_size,
+                                    )
     elif model_type == 'swinv2':
-        model = SwinTransformerV2(img_size=config.DATA.IMG_SIZE,
+        model = SwinTransformerV2(img_size=img_size,
                                   patch_size=config.MODEL.SWINV2.PATCH_SIZE,
                                   in_chans=config.MODEL.SWINV2.IN_CHANS,
                                   num_classes=config.MODEL.NUM_CLASSES,
@@ -91,7 +110,7 @@ def build_model(config, is_pretrain=False):
                                   use_checkpoint=config.TRAIN.USE_CHECKPOINT,
                                   pretrained_window_sizes=config.MODEL.SWINV2.PRETRAINED_WINDOW_SIZES)
     elif model_type == 'swin_moe':
-        model = SwinTransformerMoE(img_size=config.DATA.IMG_SIZE,
+        model = SwinTransformerMoE(img_size=img_size,
                                    patch_size=config.MODEL.SWIN_MOE.PATCH_SIZE,
                                    in_chans=config.MODEL.SWIN_MOE.IN_CHANS,
                                    num_classes=config.MODEL.NUM_CLASSES,
@@ -124,7 +143,7 @@ def build_model(config, is_pretrain=False):
                                    moe_drop=config.MODEL.SWIN_MOE.MOE_DROP,
                                    aux_loss_weight=config.MODEL.SWIN_MOE.AUX_LOSS_WEIGHT)
     elif model_type == 'swin_mlp':
-        model = SwinMLP(img_size=config.DATA.IMG_SIZE,
+        model = SwinMLP(img_size=img_size,
                         patch_size=config.MODEL.SWIN_MLP.PATCH_SIZE,
                         in_chans=config.MODEL.SWIN_MLP.IN_CHANS,
                         num_classes=config.MODEL.NUM_CLASSES,
