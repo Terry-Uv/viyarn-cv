@@ -46,7 +46,11 @@ def build_model(config, is_pretrain=False):
 
     img_size = _get_img_size(config)
     # New
-    base_window_size = img_size[0] // 32
+    base_window_size = None
+    if img_size is not tuple:
+        base_window_size = img_size // 32
+    else:
+        base_window_size = img_size[0] //32
 
     if model_type == 'swin':
         model = SwinTransformer(img_size=img_size,
