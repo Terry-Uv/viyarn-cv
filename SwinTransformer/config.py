@@ -30,6 +30,8 @@ _C.DATA.DATA_PATH = ''
 _C.DATA.DATASET = 'imagenet'
 # Input image size
 _C.DATA.IMG_SIZE = 224
+# Input image width (0 means square, same as IMG_SIZE)
+_C.DATA.IMG_SIZE_W = 0
 # Interpolation to resize image (random, bilinear, bicubic)
 _C.DATA.INTERPOLATION = 'bicubic'
 # Use zipped dataset instead of folder dataset

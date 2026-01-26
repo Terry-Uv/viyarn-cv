@@ -7,6 +7,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
@@ -219,78 +220,124 @@ class SwinTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-        if self.shift_size > 0:
-            # calculate attention mask for SW-MSA
-            H, W = self.input_resolution
-            img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
-            h_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
-            w_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
-            cnt = 0
-            for h in h_slices:
-                for w in w_slices:
-                    img_mask[:, h, w, :] = cnt
-                    cnt += 1
-
-            mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
-            mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
-            attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-            attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
-        else:
-            attn_mask = None
-
-        self.register_buffer("attn_mask", attn_mask)
+        # lazy / dynamic attn_mask cache (support non-divisible H/W via padding)
+        self.register_buffer("attn_mask", None, persistent=False)
+        self._attn_mask_hw = None  # cache the (Hp, Wp) used to build attn_mask
         self.fused_window_process = fused_window_process
+
+    def _get_attn_mask(self, Hp: int, Wp: int, device):
+        """Build SW-MSA mask on padded resolution (Hp, Wp)"""
+        img_mask = torch.zeros((1, Hp, Wp, 1), device=device)  # 1 Hp Wp 1
+        h_slices = (
+            slice(0, -self.window_size),
+            slice(-self.window_size, -self.shift_size),
+            slice(-self.shift_size, None),
+        )
+        w_slices = (
+            slice(0, -self.window_size),
+            slice(-self.window_size, -self.shift_size),
+            slice(-self.shift_size, None),
+        )
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = window_partition(img_mask, self.window_size)  # (nW, ws, ws, 1)
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)  # (nW, N)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)  # (nW, N, N)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        return attn_mask
 
     def forward(self, x):
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size: L={L}, H*W={H*W}"
 
         shortcut = x
         x = self.norm1(x)
         x = x.view(B, H, W, C)
 
-        # cyclic shift
+        # --- pad to multiples of window_size ---
+        pad_r = (self.window_size - W % self.window_size) % self.window_size
+        pad_b = (self.window_size - H % self.window_size) % self.window_size
+        if pad_r > 0 or pad_b > 0:
+            x = x.permute(0, 3, 1, 2)  # B C H W
+            x = F.pad(x, (0, pad_r, 0, pad_b))  # pad W then H
+            x = x.permute(0, 2, 3, 1)  # B Hp Wp C
+
+        Hp, Wp = H + pad_b, W + pad_r
+
+        # Build a validity mask so padded tokens are NEVER attended to (as keys)
+        # valid: 1 for real tokens, 0 for padded area
+        if pad_r > 0 or pad_b > 0:
+            valid = torch.ones((1, Hp, Wp, 1), device=x.device, dtype=x.dtype)
+            if pad_b > 0:
+                valid[:, -pad_b:, :, :] = 0
+            if pad_r > 0:
+                valid[:, :, -pad_r:, :] = 0
+        else:
+            valid = None
+
+        # --- cyclic shift ---
         if self.shift_size > 0:
-            if not self.fused_window_process:
-                shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
-                # partition windows
-                x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            if valid is not None:
+                shifted_valid = torch.roll(valid, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
             else:
-                x_windows = WindowProcess.apply(x, B, H, W, C, -self.shift_size, self.window_size)
+                shifted_valid = None
+
+            # lazy build / cache SW-MSA mask by (Hp, Wp)
+            if (self.attn_mask is None) or (self._attn_mask_hw != (Hp, Wp)) or (self.attn_mask.device != x.device):
+                self.attn_mask = self._get_attn_mask(Hp, Wp, x.device)
+                self._attn_mask_hw = (Hp, Wp)
+            attn_mask = self.attn_mask
         else:
             shifted_x = x
-            # partition windows
-            x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+            shifted_valid = valid
+            attn_mask = None
 
-        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        # If padding exists, add an extra mask so padded tokens are not visible as KEYS
+        if shifted_valid is not None:
+            valid_windows = window_partition(shifted_valid, self.window_size)  # (nW, ws, ws, 1)
+            valid_windows = valid_windows.view(-1, self.window_size * self.window_size)  # (nW, N)
+            key_is_pad = (valid_windows == 0)  # bool (nW, N)
+            # mask keys: (nW, N, N), broadcast over queries
+            pad_key_mask = key_is_pad.unsqueeze(1).expand(-1, self.window_size * self.window_size, -1)
+            pad_key_mask = pad_key_mask.to(dtype=torch.float32) * float(-100.0)
+
+            if attn_mask is None:
+                attn_mask = pad_key_mask
+            else:
+                attn_mask = attn_mask + pad_key_mask
+
+        # partition windows
+        x_windows = window_partition(shifted_x, self.window_size)  # (nW*B, ws, ws, C)
+        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # (nW*B, N, C)
 
         # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        attn_windows = self.attn(x_windows, mask=attn_mask)  # (nW*B, N, C)
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+        shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # (B, Hp, Wp, C)
 
         # reverse cyclic shift
         if self.shift_size > 0:
-            if not self.fused_window_process:
-                shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
-                x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
-            else:
-                x = WindowProcessReverse.apply(attn_windows, B, H, W, C, self.shift_size, self.window_size)
+            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
         else:
-            shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
             x = shifted_x
+
+        # unpad back to (H, W)
+        if pad_r > 0 or pad_b > 0:
+            x = x[:, :H, :W, :].contiguous()
+
         x = x.view(B, H * W, C)
-        x = shortcut + self.drop_path(x)
 
         # FFN
+        x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-
         return x
 
     def extra_repr(self) -> str:

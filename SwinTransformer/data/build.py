@@ -41,6 +41,15 @@ except:
     from timm.data.transforms import _pil_interp
 
 
+def _get_img_hw(config):
+    """Get image height and width from config, supporting non-square inputs."""
+    h = int(config.DATA.IMG_SIZE)
+    w = int(getattr(config.DATA, "IMG_SIZE_W", 0) or 0)
+    if w <= 0:
+        w = h
+    return h, w
+
+
 def build_loader(config):
     config.defrost()
     dataset_train, config.MODEL.NUM_CLASSES = build_dataset(is_train=True, config=config)
@@ -123,8 +132,17 @@ def build_dataset(is_train, config):
 
 
 def build_transform(is_train, config):
-    resize_im = config.DATA.IMG_SIZE > 32
+    img_h, img_w = _get_img_hw(config)
+    resize_im = max(img_h, img_w) > 32
     if is_train:
+        if img_h != img_w:
+            # Minimal train transform just to avoid crashing in eval-only runs
+            return transforms.Compose([
+                transforms.Resize((img_h, img_w), interpolation=_pil_interp(config.DATA.INTERPOLATION)),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
+            ])
         # this should always dispatch to transforms_imagenet_train
         transform = create_transform(
             input_size=config.DATA.IMG_SIZE,
@@ -144,18 +162,17 @@ def build_transform(is_train, config):
 
     t = []
     if resize_im:
-        if config.TEST.CROP:
-            size = int((256 / 224) * config.DATA.IMG_SIZE)
-            t.append(
-                transforms.Resize(size, interpolation=_pil_interp(config.DATA.INTERPOLATION)),
-                # to maintain same ratio w.r.t. 224 images
-            )
-            t.append(transforms.CenterCrop(config.DATA.IMG_SIZE))
+        if img_h == img_w:
+            # keep original behavior for square
+            if config.TEST.CROP:
+                size = int((256 / 224) * img_h)
+                t.append(transforms.Resize(size, interpolation=_pil_interp(config.DATA.INTERPOLATION)))
+                t.append(transforms.CenterCrop(img_h))
+            else:
+                t.append(transforms.Resize((img_h, img_w), interpolation=_pil_interp(config.DATA.INTERPOLATION)))
         else:
-            t.append(
-                transforms.Resize((config.DATA.IMG_SIZE, config.DATA.IMG_SIZE),
-                                  interpolation=_pil_interp(config.DATA.INTERPOLATION))
-            )
+            # anisotropic eval: preserve aspect ratio exactly, NO crop
+            t.append(transforms.Resize((img_h, img_w), interpolation=_pil_interp(config.DATA.INTERPOLATION)))
 
     t.append(transforms.ToTensor())
     t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
