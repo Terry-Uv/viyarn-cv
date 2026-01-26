@@ -4,5 +4,6 @@
 __pycache__
 .vscode
 *.bin
+*.pth
 SwinTransformer/result/*
 .git-old
