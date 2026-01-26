@@ -46,11 +46,11 @@ def build_model(config, is_pretrain=False):
 
     img_size = _get_img_size(config)
     # New
-    base_window_size = None
-    if img_size is not tuple:
-        base_window_size = img_size // 32
-    else:
-        base_window_size = img_size[0] //32
+    base_window_size = 7
+    # if img_size is not tuple:
+    #     base_window_size = img_size // 32
+    # else:
+    #     base_window_size = img_size[0] //32
 
     if model_type == 'swin':
         model = SwinTransformer(img_size=img_size,
@@ -94,7 +94,8 @@ def build_model(config, is_pretrain=False):
                                     rope_mixed=config.MODEL.SWIN_ROPE.MIXED,
                                     use_rpb=config.MODEL.SWIN_ROPE.RPB,
                                     # New one
-                                    basewindow_size=base_window_size,
+                                    base_window_size=base_window_size,
+                                    # TODO 将我们需要的args传入进去
                                     )
     elif model_type == 'swinv2':
         model = SwinTransformerV2(img_size=img_size,
