@@ -15,12 +15,35 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
+import torch.distributed
 from typing import Tuple
 
 from timm.models.layers import to_2tuple
 
 from .swin_transformer import SwinTransformer, SwinTransformerBlock, WindowAttention, BasicLayer
 from .swin_transformer import PatchMerging
+
+import torch.distributed as dist
+
+_VIYARN_PRINTED_KEYS = set()
+
+def rank0_print_once(msg: str, key: str | None = None):
+    """
+    Print only once on rank0 (or non-DDP).
+    - key: 用来去重；不传则用 msg 本身做 key。
+    """
+    # DDP: only rank0
+    if dist.is_available() and dist.is_initialized():
+        if dist.get_rank() != 0:
+            return
+
+    global _VIYARN_PRINTED_KEYS
+    if key is None:
+        key = msg
+    if key in _VIYARN_PRINTED_KEYS:
+        return
+    _VIYARN_PRINTED_KEYS.add(key)
+    print(msg, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +694,20 @@ class RoPESwinTransformer(SwinTransformer):
             viyarn_alphas_all = tuple(float(alpha_max) for _ in range(total_blocks))
 
         patches_resolution = self.patch_embed.patches_resolution
+
+        rank0_print_once(
+            (
+                "[ViYaRN] init: "
+                f"base_window_size={base_window_size}, window_size={window_size}, "
+                f"s_edge={s_edge:.3f}, "
+                f"gamma_lo={yarn_gamma_lo}, gamma_hi={yarn_gamma_hi}, transition={yarn_transition}, "
+                f"depth_ramp_p={viyarn_depth_ramp_p}, scale_threshold={viyarn_scale_threshold}, "
+                f"alpha_max={alpha_max}, "
+                f"alpha_min={viyarn_alphas_all[0]:.3f}, alpha_max={viyarn_alphas_all[-1]:.3f}"  # 选择第一个和最后一个
+            ),
+            key="viyarn_init_once",   # 关键：所有 block 都共用同一个 key -> 全模型只打印一次
+        )
+
 
         # build layers
         self.layers = nn.ModuleList()
