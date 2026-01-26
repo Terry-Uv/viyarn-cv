@@ -617,6 +617,7 @@ class RoPESwinTransformer(SwinTransformer):
         anisotropic: bool = True,
         viyarn_depth_ramp_p: float = 1.0,
         viyarn_scale_threshold: float = 1.05,
+        viyarn_alpha_max: float = 1.0,
         **kwargs,
     ):
         super().__init__(
@@ -661,7 +662,7 @@ class RoPESwinTransformer(SwinTransformer):
         s_y = float(end_y) / float(base_y)
         s_edge = max(s_x, s_y)
         is_upsampling = bool(s_edge > float(viyarn_scale_threshold))
-        alpha_max = 1.0 if (viyarn_enable and (s_edge != 1.0)) else 0.0
+        alpha_max = float(viyarn_alpha_max) if (viyarn_enable and (s_edge != 1.0)) else 0.0
         if is_upsampling:
             viyarn_alphas_all = tuple(
                 _depth_ramp(alpha_max, bi, total_blocks, p=float(viyarn_depth_ramp_p)) for bi in range(total_blocks)

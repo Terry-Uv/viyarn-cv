@@ -45,12 +45,7 @@ def build_model(config, is_pretrain=False):
         return model
 
     img_size = _get_img_size(config)
-    # New
-    base_window_size = 7
-    # if img_size is not tuple:
-    #     base_window_size = img_size // 32
-    # else:
-    #     base_window_size = img_size[0] //32
+    base_window_size = int(getattr(config.MODEL.SWIN_ROPE, "BASE_WINDOW_SIZE", 7))
 
     if model_type == 'swin':
         model = SwinTransformer(img_size=img_size,
@@ -93,10 +88,18 @@ def build_model(config, is_pretrain=False):
                                     rope_theta=config.MODEL.SWIN_ROPE.THETA,
                                     rope_mixed=config.MODEL.SWIN_ROPE.MIXED,
                                     use_rpb=config.MODEL.SWIN_ROPE.RPB,
-                                    # New one
+                                    # --- ViYaRN ---
+                                    viyarn_enable=config.MODEL.SWIN_ROPE.VIYARN_ENABLE,
                                     base_window_size=base_window_size,
-                                    # TODO 将我们需要的args传入进去
-                                    )
+                                    yarn_gamma_lo=config.MODEL.SWIN_ROPE.YARN_GAMMA_LO,
+                                    yarn_gamma_hi=config.MODEL.SWIN_ROPE.YARN_GAMMA_HI,
+                                    yarn_transition=config.MODEL.SWIN_ROPE.YARN_TRANSITION,
+                                    anisotropic=config.MODEL.SWIN_ROPE.ANISOTROPIC,
+                                    viyarn_depth_ramp_p=config.MODEL.SWIN_ROPE.VIYARN_DEPTH_RAMP_P,
+                                    viyarn_scale_threshold=config.MODEL.SWIN_ROPE.VIYARN_SCALE_THRESHOLD,
+                                    viyarn_alpha_max=config.MODEL.SWIN_ROPE.VIYARN_ALPHA_MAX,
+                                )
+
     elif model_type == 'swinv2':
         model = SwinTransformerV2(img_size=img_size,
                                   patch_size=config.MODEL.SWINV2.PATCH_SIZE,
