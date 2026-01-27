@@ -1,5 +1,5 @@
-inputsz=512
-inputsz_w=512
+inputsz=384
+inputsz_w=384
 let WINDOW_SIZE=inputsz_w/32
 save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
 data_path="/media/disk1/models/dataset/imagenet1K"

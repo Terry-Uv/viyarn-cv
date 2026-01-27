@@ -1,5 +1,9 @@
 '''
-python -u swin-viyarn-hyperSweep-grid.py \
+config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_small_patch4_window7_224.yaml"
+checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-small.bin"
+save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
+data_path="/media/disk1/models/dataset/imagenet1K"
+python -u sweep.py \
   --cfg $config_file \
   --resume $checkpoint_file \
   --data-path $data_path \
@@ -11,8 +15,12 @@ python -u swin-viyarn-hyperSweep-grid.py \
   --transition cos \
   --gamma-lo 2.0,2.2,2.4,2.6 \
   --gamma-hi 1.2,1.4,1.6,1.8
-  
-python -u swin-viyarn-hyperSweep-grid.py \
+
+config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_small_patch4_window7_224.yaml"
+checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-small.bin"
+save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
+data_path="/media/disk1/models/dataset/imagenet1K" 
+python -u sweep.py \
   --cfg $config_file \
   --resume $checkpoint_file \
   --data-path $data_path \
@@ -20,8 +28,8 @@ python -u swin-viyarn-hyperSweep-grid.py \
   --sizes 384,512 \
   --scale-thr 1.05 \
   --transition cos \
-  --gamma-lo 2.4 \
-  --gamma-hi 1.6 \
+  --gamma-lo 2.0 \
+  --gamma-hi 1.8 \
   --alpha-max 0.4,0.6,0.8,1.0 \
   --ramp-p 0.5,1.0,2.0
 '''
@@ -34,7 +42,9 @@ import shlex
 import subprocess
 from collections import deque
 
-ACC_RE = re.compile(r"Accuracy of the network on the .* test images:\s*([0-9.]+)%")
+# ACC_RE = re.compile(r"Accuracy of the network on the .* test images:\s*([0-9.]+)%")
+ACC1_RE = re.compile(r"\*\s*Acc@1\s+([0-9]+(?:\.[0-9]+)?)\b")
+ACC_FALLBACK_RE = re.compile(r"Accuracy of the network on the .* test images:\s*([0-9]+(?:\.[0-9]+)?)%")
 
 def run_cmd(cmd, *, cwd=None, env=None, tail_n=120, verbose=False):
     """
@@ -54,17 +64,29 @@ def run_cmd(cmd, *, cwd=None, env=None, tail_n=120, verbose=False):
         universal_newlines=True,
     )
     acc1 = None
+    acc1_precise = None  # prefer "* Acc@1 ..."
     for line in p.stdout:
         last.append(line.rstrip("\n"))
         if verbose:
             print(line, end="")
-        m = ACC_RE.search(line)
-        if m:
+
+        m1 = ACC1_RE.search(line)
+        if m1:
             try:
-                acc1 = float(m.group(1))
+                acc1_precise = float(m1.group(1))
+            except:
+                pass
+            continue
+
+        m2 = ACC_FALLBACK_RE.search(line)
+        if m2:
+            try:
+                acc1 = float(m2.group(1))
             except:
                 pass
     rc = p.wait()
+    if acc1_precise is not None:
+        acc1 = acc1_precise
     return rc, acc1, list(last)
 
 def ntfy(topic, title, msg):
@@ -99,8 +121,8 @@ def one_eval(args, *, img, gamma_lo, gamma_hi, transition, scale_thr, alpha_max,
     os.makedirs(out_dir, exist_ok=True)
 
     # rotate port slightly to reduce "Address already in use" flakiness
-    master_port = args.master_port + (img % 100) + (hash((gamma_lo, gamma_hi, scale_thr, alpha_max, ramp_p, enable)) % 200)
-
+    # master_port = args.master_port + (img % 100) + (hash((gamma_lo, gamma_hi, scale_thr, alpha_max, ramp_p, enable)) % 200)
+    master_port = 6555 if img==384 else 6556
     cmd = []
     cmd += build_ddp_cmd(args, master_port)
     cmd += [
@@ -135,7 +157,7 @@ def main():
     ap.add_argument("--data-path", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--main-py", default="main.py")
-    ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--nproc-per-node", type=int, default=8)
     ap.add_argument("--master-port", type=int, default=6555)
 
