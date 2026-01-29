@@ -19,6 +19,44 @@ python -u sweep.py \
 config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_small_patch4_window7_224.yaml"
 checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-small.bin"
 save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
+data_path="/media/disk1/models/dataset/imagenet1K"
+python -u sweep.py \
+  --cfg $config_file \
+  --resume $checkpoint_file \
+  --data-path $data_path \
+  --output $save_dir/sweep_thr10 \
+  --sizes 384,512 \
+  --scale-thr 2.0 \
+  --alpha-max 1.0 \
+  --ramp-p 1.0 \
+  --transition cos \
+  --gamma-lo 2.0,2.2,2.4,2.6 \
+  --gamma-hi 1.2,1.4,1.6,1.8 \
+  --nproc-per-node 8
+
+
+
+config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_tiny_patch4_window7_224.yaml"
+checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-tiny.bin"
+save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
+data_path="/media/disk1/models/dataset/imagenet1K"
+python -u sweep.py \
+  --cfg $config_file \
+  --resume $checkpoint_file \
+  --data-path $data_path \
+  --output $save_dir/sweep_thr10 \
+  --sizes 384,512 \
+  --scale-thr 2.0 \
+  --alpha-max 1.0 \
+  --ramp-p 1.0 \
+  --transition cos \
+  --gamma-lo 2.0,2.2,2.4,2.6 \
+  --gamma-hi 1.2,1.4,1.6,1.8 \
+  --nproc-per-node 4
+
+config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_small_patch4_window7_224.yaml"
+checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-small.bin"
+save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
 data_path="/media/disk1/models/dataset/imagenet1K" 
 python -u sweep.py \
   --cfg $config_file \

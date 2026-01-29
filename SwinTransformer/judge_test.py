@@ -3,18 +3,53 @@ config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swi
 checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-small.bin"
 save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
 data_path="/media/disk1/models/dataset/imagenet1K" 
-python -u sweep.py \
+python -u judge_test.py \
   --cfg $config_file \
   --resume $checkpoint_file \
   --data-path $data_path \
   --output $save_dir/sweep_thr105 \
-  --sizes 160,192,224,256,320,384,512 \
-  --scale-thr 1.05 \
+  --sizes 160,192,256,320,384,512 \
+  --scale-thr 1.8 \
   --transition cos \
   --gamma-lo 2.0 \
   --gamma-hi 1.8 \
-  --alpha-max 0.4,0.6,0.8,1.0 \
-  --ramp-p 0.5,1.0,2.0
+  --alpha-max 1.0 \
+  --ramp-p 1.0 \
+  --baseline-map "160:79.95,192:82.028,256:83.286,320:83.03,384:80.89,512:75.722"
+
+又new,升级B：
+python -u judge_test.py \
+  --cfg $config_file \
+  --resume $checkpoint_file \
+  --data-path $data_path \
+  --output $save_dir/sweep_thr105 \
+  --sizes 160,192,256,320,384,512 \
+  --scale-thr 2.0 \
+  --transition cos \
+  --gamma-lo 2.0 \
+  --gamma-hi 1.8 \
+  --alpha-max 1.0 \
+  --ramp-p 0.5,1.0,2.0 \
+  --baseline-map "160:79.95,192:82.028,256:83.286,320:83.03,384:80.89,512:75.722"
+
+config_file="/workspace/ssd/models/qwen/viy/SwinTransformer/configs/swinrope/swin_rope_axial_base_patch4_window7_224.yaml"
+checkpoint_file="/workspace/ssd/models/qwen/viy/SwinTransformer/official_ckpt/swin-rope-axial-base.bin"
+save_dir="/workspace/ssd/models/qwen/viy/SwinTransformer/result"
+data_path="/media/disk1/models/dataset/imagenet1K" 
+python -u judge_test.py \
+  --cfg $config_file \
+  --resume $checkpoint_file \
+  --data-path $data_path \
+  --output $save_dir/sweep_thr105 \
+  --sizes 160,192,256,320,384,512 \
+  --scale-thr 2.0 \
+  --transition cos \
+  --gamma-lo 2.0 \
+  --gamma-hi 1.8 \
+  --alpha-max 1.0 \
+  --ramp-p 0.5 \
+  --baseline-map "160:80.764,192:82.602,224:83.560,256:83.684,320:83.282,384:81.904,512:78.004"
+
 '''
 import argparse
 import os
@@ -23,7 +58,7 @@ import subprocess
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 
-
+count = 0
 # Prefer precise Acc@1 line:
 # [..] INFO  * Acc@1 79.512 Acc@5 94.752
 ACC1_RE = re.compile(r"\*\s*Acc@1\s+([0-9]+(?:\.[0-9]+)?)\b")
@@ -155,7 +190,9 @@ def one_eval(
 
     # Port: avoid collisions across sizes/settings by hashing the (img, setting, enable).
     key = (img, gamma_lo, gamma_hi, transition, scale_thr, alpha_max, ramp_p, enable)
-    master_port = int(args.master_port) + (abs(hash(key)) % 2000)
+    # master_port = int(args.master_port) + (abs(hash(key)) % 2000)
+    global count
+    master_port = 6555 if count%2==0 else 6556
 
     cmd: List[str] = []
     cmd += build_ddp_cmd(args, master_port)
@@ -188,6 +225,7 @@ def one_eval(
     env.setdefault("OMP_NUM_THREADS", "1")
 
     rc, acc1, tail = run_cmd(cmd, tail_n=args.tail_n, verbose=args.verbose_subprocess)
+    count+=1
     return rc, acc1, tail, out_dir
 
 
@@ -317,6 +355,7 @@ def main():
                 alpha_max=amax,
                 ramp_p=p,
                 enable=True,
+                # enable=False,
             )
             if rc != 0 or acc is None:
                 ok = False

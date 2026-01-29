@@ -686,13 +686,22 @@ class RoPESwinTransformer(SwinTransformer):
         s_edge = max(s_x, s_y)
         is_upsampling = bool(s_edge > float(viyarn_scale_threshold))
         alpha_max = float(viyarn_alpha_max) if (viyarn_enable and (s_edge != 1.0)) else 0.0
-        if is_upsampling:
-            viyarn_alphas_all = tuple(
-                _depth_ramp(alpha_max, bi, total_blocks, p=float(viyarn_depth_ramp_p)) for bi in range(total_blocks)
-            )
+        if alpha_max <= 0.0:
+            viyarn_alphas_all = tuple(0.0 for _ in range(total_blocks))
         else:
-            viyarn_alphas_all = tuple(float(alpha_max) for _ in range(total_blocks))
+            # reinterpret viyarn_scale_threshold as "ramp reference scale" (s_ref), not a hard gate
+            s_ref = max(float(viyarn_scale_threshold), 1.000001)
 
+            # r in [0,1]: how much we trust ramp vs constant
+            # NOTE: if later you evaluate s_edge < 1 (downscale), this clamps to 0 (i.e., constant-alpha style)
+            r = (s_edge - 1.0) / (s_ref - 1.0)
+            r = float(max(0.0, min(1.0, r)))
+
+            viyarn_alphas_all = tuple(
+                (1.0 - r) * alpha_max
+                + r * _depth_ramp(alpha_max, bi, total_blocks, p=float(viyarn_depth_ramp_p))
+                for bi in range(total_blocks)
+            )
         patches_resolution = self.patch_embed.patches_resolution
 
         rank0_print_once(
