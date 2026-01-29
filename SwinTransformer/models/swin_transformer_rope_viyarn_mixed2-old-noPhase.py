@@ -25,128 +25,6 @@ from .swin_transformer import PatchMerging
 
 import torch.distributed as dist
 
-
-# -----------------------------------------------------------------------------
-# Mixed-RoPE rho presets (Swin-RoPE mixed checkpoints)
-# -----------------------------------------------------------------------------
-# These presets are distilled from your offline mixed-freq statistics:
-#   rho = log||w||, and we use (rho_lo, rho_hi) to map each freq-column to a
-#   band-wise gamma via a smooth transition on the rho axis.
-#
-# IMPORTANT:
-# - In Swin, different stages learn noticeably different rho distributions.
-#   Using per-stage (q50, q90) is usually more stable than a single global pair.
-# - You can override behavior via RoPESwinTransformer(mixed_rho_preset=...):
-#     "auto"  : prefer stage-wise preset if model signature matches (default)
-#     "stage" : force stage-wise preset (if available)
-#     "global": use global preset pair (if available)
-#     "none"  : do not override user-provided mixed_rho_lo/hi
-#
-# If your model signature doesn't match any preset, we fall back to the passed
-# mixed_rho_lo/mixed_rho_hi values.
-
-_SWIN_MIXED_RHO_STAGE_PRESET = {
-    # (rho_lo, rho_hi) == (q50, q90) per stage
-    "tiny": {
-        0: (-0.4056,  0.8204),
-        1: (-1.0030,  0.6193),
-        2: (-1.5606,  0.2886),
-        3: (-2.9427, -0.0782),
-    },
-    "small": {
-        0: (-0.8336,  0.8969),
-        1: (-1.2199,  0.6708),
-        2: (-1.8708,  0.1810),
-        3: (-3.5684,  0.0182),
-    },
-    "base": {
-        0: (-0.4721,  0.8848),
-        1: (-0.9101,  0.7040),
-        2: (-2.3116,  0.0740),
-        3: (-3.6570,  0.1980),
-    },
-}
-
-_SWIN_MIXED_RHO_GLOBAL_PRESET = {
-    # (rho_lo, rho_hi) == (q50, q90) global
-    "tiny":  (-1.724844, 0.241942),
-    "small": (-2.025674, 0.206776),
-    "base":  (-2.426696, 0.156869),
-}
-
-def _infer_swin_variant(embed_dim, depths, num_heads) -> str | None:
-    """Infer canonical Swin variant from signature (embed_dim, depths, num_heads)."""
-    try:
-        ed = int(embed_dim)
-        dp = tuple(int(x) for x in depths)
-        hd = tuple(int(x) for x in num_heads)
-    except Exception:
-        return None
-
-    if ed == 96 and dp == (2, 2, 6, 2) and hd == (3, 6, 12, 24):
-        return "tiny"
-    if ed == 96 and dp == (2, 2, 18, 2) and hd == (3, 6, 12, 24):
-        return "small"
-    if ed == 128 and dp == (2, 2, 18, 2) and hd == (4, 8, 16, 32):
-        return "base"
-
-    return None
-
-def _expand_stagewise_value(val, num_layers: int) -> list[float] | None:
-    """Accept float | list/tuple(len=num_layers) | dict(stage->float)."""
-    if isinstance(val, (int, float)):
-        return [float(val) for _ in range(num_layers)]
-    if isinstance(val, (list, tuple)) and len(val) == num_layers:
-        return [float(x) for x in val]
-    if isinstance(val, dict):
-        out = []
-        for i in range(num_layers):
-            if i not in val:
-                return None
-            out.append(float(val[i]))
-        return out
-    return None
-
-def _choose_mixed_rho_by_stage(
-    embed_dim,
-    depths,
-    num_heads,
-    num_layers: int,
-    mixed_rho_lo,
-    mixed_rho_hi,
-    mixed_rho_preset: str = "auto",
-):
-    """Return (rho_lo_by_stage, rho_hi_by_stage, info_str)."""
-    # If user already passed stage-wise values, honor them.
-    lo_user = _expand_stagewise_value(mixed_rho_lo, num_layers)
-    hi_user = _expand_stagewise_value(mixed_rho_hi, num_layers)
-    if lo_user is not None and hi_user is not None and not (isinstance(mixed_rho_lo, (int, float)) and isinstance(mixed_rho_hi, (int, float))):
-        return lo_user, hi_user, "user(stage-wise)"
-
-    mode = str(mixed_rho_preset or "auto").lower()
-    if mode == "none":
-        lo = [float(mixed_rho_lo) for _ in range(num_layers)]
-        hi = [float(mixed_rho_hi) for _ in range(num_layers)]
-        return lo, hi, "user(global)"
-
-    variant = _infer_swin_variant(embed_dim, depths, num_heads)
-
-    if mode in ("auto", "stage") and variant in _SWIN_MIXED_RHO_STAGE_PRESET:
-        preset = _SWIN_MIXED_RHO_STAGE_PRESET[variant]
-        lo = [float(preset[i][0]) for i in range(num_layers)]
-        hi = [float(preset[i][1]) for i in range(num_layers)]
-        return lo, hi, f"preset(stage:{variant})"
-
-    if mode in ("auto", "global") and variant in _SWIN_MIXED_RHO_GLOBAL_PRESET:
-        plo, phi = _SWIN_MIXED_RHO_GLOBAL_PRESET[variant]
-        lo = [float(plo) for _ in range(num_layers)]
-        hi = [float(phi) for _ in range(num_layers)]
-        return lo, hi, f"preset(global:{variant})"
-
-    lo = [float(mixed_rho_lo) for _ in range(num_layers)]
-    hi = [float(mixed_rho_hi) for _ in range(num_layers)]
-    return lo, hi, "fallback(user/global)"
-
 _VIYARN_PRINTED_KEYS = set()
 
 def rank0_print_once(msg: str, key: str | None = None):
@@ -908,7 +786,6 @@ class RoPESwinTransformer(SwinTransformer):
         mixed_ntk_enable: bool = True,
         mixed_rho_lo: float = -1.1643,
         mixed_rho_hi: float = 0.9026,
-        mixed_rho_preset: str = "auto",
         **kwargs,
     ):
         super().__init__(
@@ -978,30 +855,6 @@ class RoPESwinTransformer(SwinTransformer):
 
 
         # build layers
-        # --- Mixed rho schedule (stage-wise by default for known Swin variants) ---
-        if bool(rope_mixed) and bool(mixed_ntk_enable):
-            rho_lo_by_stage, rho_hi_by_stage, rho_info = _choose_mixed_rho_by_stage(
-                embed_dim=embed_dim,
-                depths=depths,
-                num_heads=num_heads,
-                num_layers=int(self.num_layers),
-                mixed_rho_lo=mixed_rho_lo,
-                mixed_rho_hi=mixed_rho_hi,
-                mixed_rho_preset=mixed_rho_preset,
-            )
-        else:
-            rho_lo_by_stage = [float(mixed_rho_lo) for _ in range(int(self.num_layers))]
-            rho_hi_by_stage = [float(mixed_rho_hi) for _ in range(int(self.num_layers))]
-            rho_info = "disabled"
-
-        rank0_print_once(
-            f"[ViYaRN][mixed-rho] preset={mixed_rho_preset} | selected={rho_info} | "
-            f"rho_lo_by_stage={tuple(round(x, 4) for x in rho_lo_by_stage)} | "
-            f"rho_hi_by_stage={tuple(round(x, 4) for x in rho_hi_by_stage)}",
-            key="viyarn_mixed_rho_select",
-        )
-
-
         self.layers = nn.ModuleList()
         blk_offset = 0
         for i_layer in range(self.num_layers):
@@ -1033,8 +886,8 @@ class RoPESwinTransformer(SwinTransformer):
                 anisotropic=anisotropic,
                 viyarn_alphas=viyarn_alphas_all[blk_offset : blk_offset + depth],
                 mixed_ntk_enable=mixed_ntk_enable,
-                mixed_rho_lo=rho_lo_by_stage[i_layer],
-                mixed_rho_hi=rho_hi_by_stage[i_layer],
+                mixed_rho_lo=mixed_rho_lo,
+                mixed_rho_hi=mixed_rho_hi,
             )
             blk_offset += depth
             self.layers.append(layer)
